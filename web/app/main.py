@@ -12,7 +12,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from transformers import AutoTokenizer, CLIPModel
 
-from app.api.v1.endpoints import router as v1_router
 from app.core.config import settings
 
 # Force offline mode to avoid background Hub calls in restricted environments.
@@ -20,7 +19,6 @@ os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 app = FastAPI(title=settings.PROJECT_NAME)
-app.include_router(v1_router, prefix=settings.API_V1_PREFIX)
 
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent.parent
