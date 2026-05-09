@@ -2,3 +2,5 @@ venv-notebooks
 images
 avatars.csv
 .env
+*/chroma.sqlite3
+
