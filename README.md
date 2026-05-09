@@ -68,19 +68,26 @@ Open:
 Set in `web/.env`:
 
 - `PROJECT_NAME` - page/app title
+- `SEARCH_CONFIG_PATH` - path (inside `web/`) to YAML search config file (default: `config/search.yaml`)
 
-### HNSW Tuning (in `web/app/main.py`)
+### HNSW Tuning (from YAML)
 
-- `space = cosine`
-- `ef_construction = 600`
-- `max_neighbors = 48`
-- `ef_search = 128`
-- `num_threads = min(8, cpu_count)`
-- `resize_factor = 1.2`
-- `batch_size = 512`
-- `sync_threshold = 2000`
+Default file: `web/config/search.yaml`
 
-These settings target fast query latency with strong recall.
+```yaml
+hnsw:
+  space: cosine
+  ef_construction: 600
+  max_neighbors: 48
+  ef_search: 128
+  num_threads: 8
+  resize_factor: 1.2
+  batch_size: 512
+  sync_threshold: 2000
+```
+
+These settings target fast query latency with strong recall.  
+If `num_threads` is omitted in YAML, the app uses a CPU-based default capped at 8.
 If your collection already exists, rebuild it to guarantee new index settings are applied.
 
 ## Troubleshooting

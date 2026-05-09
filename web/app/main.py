@@ -8,12 +8,13 @@ from urllib.parse import quote
 import chromadb
 import numpy as np
 import torch
+import yaml
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from transformers import AutoTokenizer, CLIPModel
 
-from app.core.config import settings
+from app.core.config import get_search_config_path, settings
 
 # Force offline mode to avoid background Hub calls in restricted environments.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
@@ -30,19 +31,6 @@ IMAGE_DIR_CANDIDATES = [
 CHROMA_DB_PATH = PROJECT_ROOT / "steam_avatars_db"
 CHROMA_COLLECTION = "steam_avatars_collection"
 HF_CACHE_DIR = Path.home() / ".cache" / "huggingface" / "hub"
-HNSW_CONFIG = {
-    "space": "cosine",
-    # Higher build-time recall quality; one-time cost during indexing.
-    "ef_construction": 600,
-    # Higher graph connectivity improves recall, at a memory/build-time cost.
-    "max_neighbors": 48,
-    # Main query-quality/latency dial; tuned for high recall with good speed.
-    "ef_search": 128,
-    # Keep index growth stable under larger ingest batches.
-    "resize_factor": 1.2,
-    "batch_size": 512,
-    "sync_threshold": 2000,
-}
 
 IMAGE_DIR = next((path for path in IMAGE_DIR_CANDIDATES if path.exists()), None)
 if IMAGE_DIR is None:
@@ -77,8 +65,27 @@ def _load_models() -> tuple[CLIPModel, AutoTokenizer]:
 @lru_cache(maxsize=1)
 def _get_collection():
     client = chromadb.PersistentClient(path=str(CHROMA_DB_PATH))
-    config = {"hnsw": {**HNSW_CONFIG, "num_threads": max(1, min(8, os.cpu_count() or 1))}}
+    search_config = _load_search_config()
+    hnsw_config = search_config.get("hnsw", {})
+    if not isinstance(hnsw_config, dict) or not hnsw_config:
+        raise RuntimeError(
+            f"Missing 'hnsw' config in {get_search_config_path()}. "
+            "Define HNSW settings in YAML before starting the app."
+        )
+
+    config = {"hnsw": dict(hnsw_config)}
+    config["hnsw"].setdefault("num_threads", settings.HNSW_DEFAULT_NUM_THREADS)
     return client.get_or_create_collection(name=CHROMA_COLLECTION, configuration=config)
+
+
+@lru_cache(maxsize=1)
+def _load_search_config() -> dict[str, dict[str, str | int | float]]:
+    config_path = get_search_config_path()
+    if not config_path.exists():
+        return {}
+    with config_path.open("r", encoding="utf-8") as config_file:
+        loaded = yaml.safe_load(config_file) or {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def search(text: str, n_results: int = 20) -> list[dict[str, float | str]]:
