@@ -1,4 +1,5 @@
 import os
+import json
 from functools import lru_cache
 from html import escape
 from pathlib import Path
@@ -114,7 +115,9 @@ def index(q: str | None = Query(default=None), n: int = Query(default=20, ge=1, 
             error_message = str(exc)
         cards = "\n".join(
             "<div class=\"card\">"
-            f"<img src=\"{escape(_resolve_image_src(result))}\" alt=\"{escape(_id_to_filename(str(result['id'])))}\" loading=\"lazy\" />"
+            f"<img class=\"result-image\" src=\"{escape(_build_image_sources(result)[0])}\" "
+            f"data-fallbacks=\"{escape(json.dumps(_build_image_sources(result)), quote=True)}\" "
+            f"alt=\"{escape(_id_to_filename(str(result['id'])))}\" loading=\"lazy\" />"
             f"<p>distance: {result['distance']:.4f}</p>"
             "</div>"
             for result in results
@@ -232,6 +235,36 @@ def index(q: str | None = Query(default=None), n: int = Query(default=20, ge=1, 
   </form>
   <p class="error">{escape(error_message)}</p>
   <div class="grid">{cards}</div>
+  <script>
+    for (const img of document.querySelectorAll(".result-image")) {{
+      const fallbacksRaw = img.dataset.fallbacks || "[]";
+      let fallbacks = [];
+      try {{
+        fallbacks = JSON.parse(fallbacksRaw);
+      }} catch (_err) {{
+        fallbacks = [img.currentSrc || img.src];
+      }}
+
+      // Remove duplicates but keep order.
+      fallbacks = [...new Set(fallbacks.filter(Boolean))];
+      let index = 0;
+      let retriedCurrent = false;
+
+      img.addEventListener("error", () => {{
+        if (!retriedCurrent) {{
+          retriedCurrent = true;
+          const separator = img.src.includes("?") ? "&" : "?";
+          img.src = img.src + separator + "_retry=" + Date.now();
+          return;
+        }}
+        retriedCurrent = false;
+        index += 1;
+        if (index < fallbacks.length) {{
+          img.src = fallbacks[index];
+        }}
+      }});
+    }}
+  </script>
 </body>
 </html>"""
     return HTMLResponse(content=html)
@@ -242,15 +275,23 @@ def _id_to_filename(image_id: str) -> str:
 
 
 def _resolve_image_src(result: dict[str, float | str]) -> str:
+    return _build_image_sources(result)[0]
+
+
+def _build_image_sources(result: dict[str, float | str]) -> list[str]:
     filename = _id_to_filename(str(result["id"]))
+    sources: list[str] = []
     local_path = IMAGE_DIR / filename
     if local_path.exists():
-        return f"/images/{quote(filename)}"
+        sources.append(f"/images/{quote(filename)}")
 
     url = str(result.get("url", ""))
     if url:
-        return url
-    return f"/images/{quote(filename)}"
+        sources.append(url)
+
+    if not sources:
+        sources.append(f"/images/{quote(filename)}")
+    return sources
 
 
 def _resolve_display_name(result: dict[str, float | str]) -> str:
