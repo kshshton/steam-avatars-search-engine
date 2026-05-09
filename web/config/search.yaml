@@ -1,9 +1,25 @@
+# Chroma PersistentClient HNSW index settings passed to collection configuration
+# ({ "hnsw": { ... } }). Used by web/app/main.py when opening steam_avatars_collection.
+#
+# Path: SEARCH_CONFIG_PATH in web/.env (default config/search.yaml), resolved from web/.
+# Omitting num_threads falls back to HNSW_DEFAULT_NUM_THREADS (CPU count capped at 8).
+# Changing graph/build parameters only affects new indexes; rebuild the persisted collection
+# if you change these after data is already indexed.
+
 hnsw:
+  # Embedding distance for the ANN graph (CLIP embeddings are cosine-normalized).
   space: cosine
+  # Candidate list width while building the graph; trades build time vs recall quality.
   ef_construction: 600
+  # HNSW "M": outgoing edges per node; higher improves recall/memory, slower builds.
   max_neighbors: 48
+  # Candidate list width at query time; trades search latency vs recall (tune for prod load).
   ef_search: 128
+  # Worker threads for index maintenance (inserts/compaction); omit to use CPU-based default above.
   num_threads: 8
+  # Multiplier when the index grows backing storage (reduces realloc churn during bulk ingest).
   resize_factor: 1.2
+  # Embeddings flushed per persistence batch during bulk indexing.
   batch_size: 512
+  # Persist to disk after this many queued mutations (bulk-load vs durability trade-off).
   sync_threshold: 2000
