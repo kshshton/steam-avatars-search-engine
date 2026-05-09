@@ -2,6 +2,7 @@ import asyncio
 import csv
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -10,45 +11,50 @@ from playwright.async_api import async_playwright, Page, TimeoutError as Playwri
 
 load_dotenv()
 
-#  Config 
+# --- Config ---
 TARGET_URL = os.getenv("SOURCE_URL")
 if not TARGET_URL:
-    sys.exit("\u274c  SOURCE_URL is not set — add it to your .env file")
+    sys.exit("SOURCE_URL is not set - add it to your .env file")
 
-SELECTOR    = "._2YbSwspXZ90_vgzS5O3X4F"  #  change me if needed
-OUTPUT_FILE = Path("avatars.csv")
+SELECTOR    = "._2YbSwspXZ90_vgzS5O3X4F"  
+OUTPUT_FILE = Path(__file__).parent / "avatars.csv"
 
 CSV_FIELDS = ["url", "date_scraped"]
-SCROLL_STEP      = 600    # px per tick (smaller = more scroll events fired)
-TICK_DELAY_MS    = 600    # ms between ticks (give network time to respond)
-STALL_WAIT_MS    = 4000   # ms to wait each time we're stuck at the bottom
-MAX_STALL_TIME_S = 30     # total seconds to keep trying before giving up
-BOTTOM_MARGIN    = 100    # px tolerance for "at bottom" detection
-HEADLESS_MODE    = True   # cli only mode
-# 
+SCROLL_STEP      = 600    
+TICK_DELAY_MS    = 600    
+STALL_WAIT_MS    = 4000   
+MAX_STALL_TIME_S = 30     
+BOTTOM_MARGIN    = 100    
+HEADLESS_MODE    = True   
 
+# --- File Logic ---
 
 def load_csv(path: Path) -> dict[str, dict]:
     """Load existing CSV into a dict keyed by url."""
     rows: dict[str, dict] = {}
     if path.exists():
-        with open(path, newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                rows[row["url"]] = row
-        print(f"Loaded {len(rows)} existing rows from {path}")
+        try:
+            with open(path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row.get("url"):
+                        rows[row["url"]] = row
+            print(f"Loaded {len(rows)} existing rows from {path}")
+        except Exception as e:
+            print(f"Warning: Could not read existing CSV: {e}")
     return rows
 
 
 def upsert_csv(path: Path, new_srcs: list[str]) -> tuple[int, int]:
     """
-    Upsert new_srcs into the CSV at path.
-
-    Returns (added, updated) counts.
+    Upsert new_srcs into the CSV.
     """
     now = datetime.now(timezone.utc).isoformat()
     existing = load_csv(path)
 
-    added = updated = 0
+    added = 0
+    updated = 0
+    
     for src in new_srcs:
         if src in existing:
             existing[src]["date_scraped"] = now
@@ -57,35 +63,33 @@ def upsert_csv(path: Path, new_srcs: list[str]) -> tuple[int, int]:
             existing[src] = {"url": src, "date_scraped": now}
             added += 1
 
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        writer.writeheader()
-        writer.writerows(existing.values())
+    print(f"Writing {len(existing)} total rows to {path.name}...")
+
+    try:
+        data_to_write = list(existing.values())
+        
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+            writer.writeheader()
+            writer.writerows(data_to_write)
+            f.flush()
+            os.fsync(f.fileno()) 
+    except Exception as e:
+        print(f"Critical Error writing CSV: {e}")
 
     return added, updated
 
 
-#  Scroll logic 
+# --- Scroll logic ---
 
 async def scroll_and_collect(page: Page, selector: str) -> list[str]:
-    """
-    Steam's Points Shop uses a virtualised list — only items in the viewport
-    exist in the DOM at any time.  The page height barely changes as you scroll.
-
-    Strategy:
-       Harvest visible srcs on every tick into a running set.
-       Track scroll position, not page height, to detect the real end.
-       Stall clock only resets when NEW srcs appear (not when height changes).
-    """
-    import time
-    print("Starting scroll collector (virtualised-list mode)…")
+    print("Starting scroll collector (Firefox / Virtualised-list mode)...")
 
     collected: set[str] = set()
     last_scroll_pos: float = -1
     stall_started: float | None = None
 
     async def harvest() -> int:
-        """Grab all currently visible srcs; return count of newly found ones."""
         visible: list[str] = await page.evaluate(
             """([sel]) =>
                 [...document.querySelectorAll(sel)]
@@ -110,81 +114,67 @@ async def scroll_and_collect(page: Page, selector: str) -> list[str]:
         )
         at_bottom = (scroll_pos + viewport_h) >= (total_h - BOTTOM_MARGIN)
 
-        # Harvest on every tick — virtualised items disappear when they scroll out
         new_found = await harvest()
         if new_found:
-            print(f"+{new_found} new srcs (total {len(collected)}) @ scroll {scroll_pos:.0f}px")
-            stall_started = None  # fresh content resets stall clock
+            print(f"+{new_found} new srcs (total {len(collected)}) @ {scroll_pos:.0f}px")
+            stall_started = None  
 
-        if at_bottom or abs(scroll_pos - last_scroll_pos) < 5:
+        if at_bottom or (last_scroll_pos > 0 and abs(scroll_pos - last_scroll_pos) < 5):
             if stall_started is None:
                 stall_started = time.monotonic()
-                print(f"Reached bottom, waiting for more content… (total so far: {len(collected)})")
+                print("Waiting for content to load...")
 
             elapsed = time.monotonic() - stall_started
             if elapsed >= MAX_STALL_TIME_S:
-                print(f"No new srcs for {MAX_STALL_TIME_S}s — feed exhausted")
+                print("End of page reached.")
                 break
 
-            # Nudge up then back down to re-trigger the virtualised renderer
-            await page.evaluate("() => window.scrollBy({ top: -400, behavior: 'smooth' })")
+            await page.evaluate("() => window.scrollBy({ top: -300, behavior: 'smooth' })")
             await page.wait_for_timeout(500)
-            await page.evaluate("() => window.scrollBy({ top: 450, behavior: 'smooth' })")
+            await page.evaluate("() => window.scrollBy({ top: 350, behavior: 'smooth' })")
             await page.wait_for_timeout(STALL_WAIT_MS)
-
-            remaining = MAX_STALL_TIME_S - (time.monotonic() - stall_started)
-            print(f"Still waiting… ({remaining:.0f}s left)")
         else:
-            stall_started = None  # still making progress
+            stall_started = None  
 
         last_scroll_pos = scroll_pos
 
-    results = list(collected)
-    print(f"\nCollection complete — {len(results)} unique srcs")
-    return results
+    return list(collected)
 
 
-#  Main 
+# --- Main ---
 
 async def main() -> None:
     async with async_playwright() as pw:
-        browser = await pw.chromium.launch(
-            headless=HEADLESS_MODE,
-            args=["--disable-blink-features=AutomationControlled"],
-        )
+        browser = await pw.firefox.launch(headless=HEADLESS_MODE)
+        
         context = await browser.new_context(
             user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) "
+                "Gecko/20100101 Firefox/125.0"
             ),
             viewport={"width": 1440, "height": 900},
-            locale="en-US",
-        )
-        await context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
         )
 
         page = await context.new_page()
 
-        print(f"Navigating to {TARGET_URL} …")
+        print(f"Navigating to {TARGET_URL} ...")
         await page.goto(TARGET_URL, wait_until="domcontentloaded")
 
         try:
             await page.wait_for_selector(SELECTOR, timeout=15_000)
-            print(f"Selector '{SELECTOR}' found on page")
+            print("Selector found.")
         except PlaywrightTimeoutError:
-            print(f"Selector '{SELECTOR}' not found within 15 s — continuing anyway")
+            print(f"Warning: Selector '{SELECTOR}' not found initially.")
 
         srcs = await scroll_and_collect(page, SELECTOR)
         await browser.close()
 
-    #  Upsert CSV 
-    added, updated = upsert_csv(OUTPUT_FILE, srcs)
-    print(
-    f"CSV saved to {OUTPUT_FILE} — "
-        f"{added} new row(s) added, {updated} row(s) updated"
-    )
+    if srcs:
+        added, updated = upsert_csv(OUTPUT_FILE, srcs)
+        print(f"\nSUCCESS: {added} new, {updated} updated. Total: {len(srcs)}")
+        print(f"File location: {OUTPUT_FILE.absolute()}")
+    else:
+        print("Error: No sources were collected. CSV not updated.")
 
 
 if __name__ == "__main__":
