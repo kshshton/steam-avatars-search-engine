@@ -1,0 +1,9 @@
+hnsw:
+  space: cosine
+  ef_construction: 600
+  max_neighbors: 48
+  ef_search: 128
+  num_threads: 8
+  resize_factor: 1.2
+  batch_size: 512
+  sync_threshold: 2000
