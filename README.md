@@ -1,32 +1,30 @@
 # Steam Avatars Search Engine
 
-Local semantic search for Steam avatar GIFs using CLIP embeddings + ChromaDB, with a FastAPI web UI.
+Semantic search for Steam avatar GIFs using CLIP embeddings, ChromaDB, and a FastAPI UI.
 
 ## Repository Structure
 
-- `avatars.csv` - source URLs for avatar images.
-- `images/` - locally cached GIF files (saved as IDs, e.g. `uuid.gif`).
-- `steam_avatars_db/` - ChromaDB persistent index.
-- `notebooks/embeddings.ipynb` - data prep, image download, embedding generation, and indexing.
-- `notebooks/accuracy_testing.ipynb` - search quality checks against the indexed collection.
-- `web/` - FastAPI app and web UI.
-- `requirements.txt` - notebook/data pipeline dependencies.
+- `avatars.csv` - source avatar URLs and scrape timestamps.
+- `images/` - local avatar files used by the web app and indexer.
+- `steam_avatars_db/` - persistent ChromaDB data.
+- `notebooks/embeddings.ipynb` - download, embed, and index pipeline.
+- `notebooks/accuracy_testing.ipynb` - retrieval results tests.
+- `web/` - FastAPI app.
 
-## How It Works
+## Search Pipeline
 
-1. Read avatar URLs from `avatars.csv`.
-2. Generate a UUID per image and save images to `images/<id>.gif`.
-3. Embed images with CLIP and store vectors in ChromaDB (`steam_avatars_collection`).
-4. In the web app, convert user text query into a CLIP text embedding.
-5. Query ChromaDB for nearest results and display matching GIFs in a grid.
+1. URLs are read from `avatars.csv`.
+2. Avatars are stored locally (ID-based filenames) in `images/`.
+3. CLIP image embeddings are inserted into Chroma collection `steam_avatars_collection`.
+4. Query text is embedded with CLIP text encoder.
+5. Chroma nearest-neighbor search returns top results.
+6. UI renders local image path first, then falls back to metadata `url` if loading fails.
 
 ## Setup
 
-Use separate Python environments for notebooks and web app.
+Use separate virtual environments for data/indexing and web serving.
 
-### 1) Notebook / indexing environment
-
-From repository root:
+### Notebook / indexing environment
 
 ```bash
 python -m venv venv-notebooks
@@ -34,9 +32,7 @@ source venv-notebooks/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2) Web app environment
-
-From repository root:
+### Web app environment
 
 ```bash
 python -m venv web/venv-web
@@ -44,19 +40,17 @@ source web/venv-web/bin/activate
 pip install -r web/requirements.txt
 ```
 
-## Build or Refresh the Index
+## Build or Refresh Index
 
 1. Activate `venv-notebooks`.
-2. Open and run `notebooks/embeddings.ipynb` top-to-bottom.
-3. This will:
-   - cache images into `images/`,
-   - write/update vectors in `steam_avatars_db/`.
+2. Run `notebooks/embeddings.ipynb` top-to-bottom.
+3. Verify:
+   - local images exist under `images/`,
+   - vectors are written to `steam_avatars_db/`.
 
-Optional: use `notebooks/accuracy_testing.ipynb` to validate search quality.
+Optional: run `notebooks/accuracy_testing.ipynb` to evaluate retrieval quality.
 
-## Run the Web App
-
-From repository root:
+## Run Web App
 
 ```bash
 source web/venv-web/bin/activate
@@ -66,29 +60,40 @@ uvicorn app.main:app --reload --port 8001
 
 Open:
 
-- `http://127.0.0.1:8001/` - gallery page
-- `http://127.0.0.1:8001/?q=skeleton&n=20` - search query
-- `http://127.0.0.1:8001/docs` - FastAPI docs
-
-## Screenshot
-
-![Steam Avatars Search Engine Screenshot](docs/demo.png)
+- `http://127.0.0.1:8001/` - gallery
+- `http://127.0.0.1:8001/?q=skeleton&n=20` - query example
 
 ## Configuration
 
-Edit `web/.env`:
+Set in `web/.env`:
 
-- `PROJECT_NAME` - page/app name
-- `API_V1_PREFIX` - API route prefix
+- `PROJECT_NAME` - page/app title
+
+### HNSW Tuning (in `web/app/main.py`)
+
+- `space = cosine`
+- `ef_construction = 600`
+- `max_neighbors = 48`
+- `ef_search = 128`
+- `num_threads = min(8, cpu_count)`
+- `resize_factor = 1.2`
+- `batch_size = 512`
+- `sync_threshold = 2000`
+
+These settings target fast query latency with strong recall.
+If your collection already exists, rebuild it to guarantee new index settings are applied.
 
 ## Troubleshooting
 
-- **Internal Server Error on search**  
-  Ensure web dependencies are installed in `web/venv-web`.
+- **Server error on search**
+  - Ensure `web/venv-web` dependencies are installed.
+  - Confirm local CLIP model files are available in cache.
 
-- **No search results rendered**  
-  Rebuild index with `notebooks/embeddings.ipynb` and confirm `images/` + `steam_avatars_db/` are in sync.
+- **Images missing in UI**
+  - Confirm `images/` or `Images/` exists at repo root.
+  - Re-run `notebooks/embeddings.ipynb` so local files and index are in sync.
+  - Validate metadata URLs if fallback is needed.
 
-- **Model download/network issues**  
-  Run notebooks once in an environment with internet so model artifacts are cached locally.
+- **Model download/network issues**
+  - Run notebooks once with internet access to populate Hugging Face cache.
 
