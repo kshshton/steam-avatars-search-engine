@@ -88,7 +88,7 @@ def _load_search_config() -> dict[str, dict[str, str | int | float]]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def search(text: str, n_results: int = 20) -> list[dict[str, float | str]]:
+def search(text: str, n_results: int = 10) -> list[dict[str, float | str]]:
     model, tokenizer = _load_models()
     collection = _get_collection()
 
