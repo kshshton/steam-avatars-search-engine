@@ -24,6 +24,7 @@ TICK_DELAY_MS    = 600    # ms between ticks (give network time to respond)
 STALL_WAIT_MS    = 4000   # ms to wait each time we're stuck at the bottom
 MAX_STALL_TIME_S = 30     # total seconds to keep trying before giving up
 BOTTOM_MARGIN    = 100    # px tolerance for "at bottom" detection
+HEADLESS_MODE    = True   # cli only mode
 # 
 
 
@@ -148,7 +149,7 @@ async def scroll_and_collect(page: Page, selector: str) -> list[str]:
 async def main() -> None:
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(
-            headless=False,  # set True for CI / headless runs
+            headless=HEADLESS_MODE,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = await browser.new_context(
