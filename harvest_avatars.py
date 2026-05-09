@@ -29,55 +29,61 @@ HEADLESS_MODE    = True
 
 # --- File Logic ---
 
-def load_csv(path: Path) -> dict[str, dict]:
-    """Load existing CSV into a dict keyed by url."""
-    rows: dict[str, dict] = {}
+def load_csv_urls(path: Path) -> set[str]:
+    """Load existing CSV and return a set of URLs for fast lookup."""
+    urls: set[str] = set()
     if path.exists():
         try:
             with open(path, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     if row.get("url"):
-                        rows[row["url"]] = row
-            print(f"Loaded {len(rows)} existing rows from {path}")
+                        urls.add(row["url"])
+            print(f"Loaded {len(urls)} existing URLs from {path.name}")
         except Exception as e:
             print(f"Warning: Could not read existing CSV: {e}")
-    return rows
+    return urls
 
 
-def upsert_csv(path: Path, new_srcs: list[str]) -> tuple[int, int]:
+def insert_csv(path: Path, new_urls: list[str]) -> int:
     """
-    Upsert new_srcs into the CSV.
+    Appends only new URLs to the CSV. 
+    Does not modify or re-write existing data.
     """
     now = datetime.now(timezone.utc).isoformat()
-    existing = load_csv(path)
-
-    added = 0
-    updated = 0
+    existing_urls = load_csv_urls(path)
     
-    for src in new_srcs:
-        if src in existing:
-            existing[src]["date_scraped"] = now
-            updated += 1
-        else:
-            existing[src] = {"url": src, "date_scraped": now}
-            added += 1
+    # Filter for URLs we don't already have in the file
+    to_append = [
+        {"url": url, "date_scraped": now} 
+        for url in new_urls 
+        if url not in existing_urls
+    ]
 
-    print(f"Writing {len(existing)} total rows to {path.name}...")
+    if not to_append:
+        print("No new unique URLs found to insert.")
+        return 0
+
+    file_exists = path.exists() and path.stat().st_size > 0
 
     try:
-        data_to_write = list(existing.values())
-        
-        with open(path, "w", newline="", encoding="utf-8") as f:
+        # Open in append mode ('a') to avoid re-writing the whole file
+        with open(path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-            writer.writeheader()
-            writer.writerows(data_to_write)
+            
+            # Write header only if the file is being created for the first time
+            if not file_exists:
+                writer.writeheader()
+            
+            writer.writerows(to_append)
             f.flush()
             os.fsync(f.fileno()) 
+            
+        print(f"Successfully appended {len(to_append)} new rows to {path.name}.")
     except Exception as e:
-        print(f"Critical Error writing CSV: {e}")
+        print(f"Critical Error writing to CSV: {e}")
 
-    return added, updated
+    return len(to_append)
 
 
 # --- Scroll logic ---
@@ -116,7 +122,7 @@ async def scroll_and_collect(page: Page, selector: str) -> list[str]:
 
         new_found = await harvest()
         if new_found:
-            print(f"+{new_found} new srcs (total {len(collected)}) @ {scroll_pos:.0f}px")
+            print(f"+{new_found} new URLs (total {len(collected)}) @ {scroll_pos:.0f}px")
             stall_started = None  
 
         if at_bottom or (last_scroll_pos > 0 and abs(scroll_pos - last_scroll_pos) < 5):
@@ -129,6 +135,7 @@ async def scroll_and_collect(page: Page, selector: str) -> list[str]:
                 print("End of page reached.")
                 break
 
+            # Small "jiggle" to trigger lazy loading
             await page.evaluate("() => window.scrollBy({ top: -300, behavior: 'smooth' })")
             await page.wait_for_timeout(500)
             await page.evaluate("() => window.scrollBy({ top: 350, behavior: 'smooth' })")
@@ -166,15 +173,15 @@ async def main() -> None:
         except PlaywrightTimeoutError:
             print(f"Warning: Selector '{SELECTOR}' not found initially.")
 
-        srcs = await scroll_and_collect(page, SELECTOR)
+        urls = await scroll_and_collect(page, SELECTOR)
         await browser.close()
 
-    if srcs:
-        added, updated = upsert_csv(OUTPUT_FILE, srcs)
-        print(f"\nSUCCESS: {added} new, {updated} updated. Total: {len(srcs)}")
+    if urls:
+        inserted_count = insert_csv(OUTPUT_FILE, urls)
+        print(f"\nSUCCESS: {inserted_count} new rows added.")
         print(f"File location: {OUTPUT_FILE.absolute()}")
     else:
-        print("Error: No sources were collected. CSV not updated.")
+        print("Error: No URLs were collected. CSV not updated.")
 
 
 if __name__ == "__main__":
