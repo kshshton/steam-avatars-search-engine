@@ -2,29 +2,28 @@
 
 Semantic search for Steam avatar GIFs using CLIP embeddings, ChromaDB, and a FastAPI UI.
 
-## Repository Structure
+## How it works
 
-- `avatars.csv` - source avatar URLs and scrape timestamps.
-- `images/` - local avatar files used by the web app and indexer.
-- `steam_avatars_db/` - persistent ChromaDB data.
-- `notebooks/embeddings.ipynb` - download, embed, and index pipeline.
-- `notebooks/accuracy_testing.ipynb` - retrieval results tests.
-- `web/` - FastAPI app.
+1. Avatar URLs live in `avatars.csv` (create or harvest separately; the file is gitignored if you add your own).
+2. The indexing notebook downloads images, embeds them with CLIP, and stores vectors in Chroma.
+3. The web app embeds query text with the same CLIP model and runs nearest-neighbor search against the collection.
+4. The UI serves files from `images/` and falls back to per-item `url` metadata when needed.
 
-## Search Pipeline
+## Layout
 
-1. URLs are read from `avatars.csv`.
-2. Avatars are stored locally (ID-based filenames) in `images/`.
-3. CLIP image embeddings are inserted into Chroma collection `steam_avatars_collection`.
-4. Query text is embedded with CLIP text encoder.
-5. Chroma nearest-neighbor search returns top results.
-6. UI renders local image path first, then falls back to metadata `url` if loading fails.
+| Path | Role |
+|------|------|
+| `embeddings.ipynb` | Download, embed, and index avatars into Chroma |
+| `steam_avatars_db/` | Persistent Chroma data (collection `steam_avatars_collection`) |
+| `images/` | Local image cache used by the app |
+| `web/` | FastAPI application and `config/search.yaml` |
+| `harvest_avatars.py` | Optional helper to collect URLs |
 
-## Setup
+## Environments
 
-Use separate virtual environments for data/indexing and web serving.
+Indexing and the web stack use separate virtualenvs.
 
-### Notebook / indexing environment
+**Notebooks / indexing**
 
 ```bash
 python -m venv venv-notebooks
@@ -32,7 +31,7 @@ source venv-notebooks/bin/activate
 pip install -r requirements.txt
 ```
 
-### Web app environment
+**Web app**
 
 ```bash
 python -m venv web/venv-web
@@ -40,17 +39,15 @@ source web/venv-web/bin/activate
 pip install -r web/requirements.txt
 ```
 
-## Build or Refresh Index
+Download CLIP weights once with network access (Hugging Face cache under `~/.cache/huggingface`).
+
+## Build or refresh the index
 
 1. Activate `venv-notebooks`.
-2. Run `notebooks/embeddings.ipynb` top-to-bottom.
-3. Verify:
-   - local images exist under `images/`,
-   - vectors are written to `steam_avatars_db/`.
+2. Run `embeddings.ipynb` from top to bottom with `avatars.csv` and output paths as expected by the notebook.
+3. Confirm `steam_avatars_db/` updates and images exist under `images/`.
 
-Optional: run `notebooks/accuracy_testing.ipynb` to evaluate retrieval quality.
-
-## Run Web App
+## Run the web app
 
 ```bash
 source web/venv-web/bin/activate
@@ -58,49 +55,19 @@ cd web
 uvicorn app.main:app --reload --port 8001
 ```
 
-Open:
-
-- `http://127.0.0.1:8001/` - gallery
-- `http://127.0.0.1:8001/?q=skeleton&n=20` - query example
+- Gallery: [http://127.0.0.1:8001/](http://127.0.0.1:8001/)
+- Search example: [http://127.0.0.1:8001/?q=skeleton&n=20](http://127.0.0.1:8001/?q=skeleton&n=20)
 
 ## Configuration
 
-Set in `web/.env`:
+Create `web/.env` (optional overrides):
 
-- `PROJECT_NAME` - page/app title
-- `SEARCH_CONFIG_PATH` - path (inside `web/`) to YAML search config file (default: `config/search.yaml`)
+- `PROJECT_NAME` — browser title / app label  
+- `SEARCH_CONFIG_PATH` — path under `web/` to the search YAML (default: `config/search.yaml`)
 
-### HNSW Tuning (from YAML)
-
-Default file: `web/config/search.yaml`
-
-```yaml
-hnsw:
-  space: cosine
-  ef_construction: 600
-  max_neighbors: 48
-  ef_search: 128
-  num_threads: 8
-  resize_factor: 1.2
-  batch_size: 512
-  sync_threshold: 2000
-```
-
-These settings target fast query latency with strong recall.  
-If `num_threads` is omitted in YAML, the app uses a CPU-based default capped at 8.
-If your collection already exists, rebuild it to guarantee new index settings are applied.
+Chroma **HNSW** options for the collection are read from that YAML. Example keys: `space`, `ef_construction`, `max_neighbors`, `ef_search`, `num_threads`, `resize_factor`, `batch_size`, `sync_threshold`. If `num_threads` is omitted, the app uses a CPU-based default (capped at 8). Changing graph-related values after data is indexed may require rebuilding the collection; see comments in `web/config/search.yaml`.
 
 ## Troubleshooting
 
-- **Server error on search**
-  - Ensure `web/venv-web` dependencies are installed.
-  - Confirm local CLIP model files are available in cache.
-
-- **Images missing in UI**
-  - Confirm `images/` or `Images/` exists at repo root.
-  - Re-run `notebooks/embeddings.ipynb` so local files and index are in sync.
-  - Validate metadata URLs if fallback is needed.
-
-- **Model download/network issues**
-  - Run notebooks once with internet access to populate Hugging Face cache.
-
+- **Search errors** — Ensure the web venv is installed, Chroma DB path matches the app (`steam_avatars_db` at repo root), and CLIP weights exist locally (offline mode is enabled in the app).
+- **Missing thumbnails** — Ensure `images/` exists at the repo root and metadata URLs are valid if you rely on fallback.
