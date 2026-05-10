@@ -9,9 +9,7 @@ Semantic search for Steam avatar GIFs using CLIP embeddings, ChromaDB, and a Fas
 3. The web app embeds query text with the same CLIP model and runs nearest-neighbor search against the collection.
 4. The UI serves files from `images/` and falls back to per-item `url` metadata when needed.
 
-## Screenshots
-
-Gallery and text search in the FastAPI UI:
+## Example
 
 ![Steam Avatars Search UI — gallery and query results](docs/demo.png)
 
