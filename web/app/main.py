@@ -123,7 +123,7 @@ def search(text: str, n_results: int = 10) -> list[dict[str, float | str]]:
 
 
 @app.get("/")
-def index(q: str | None = Query(default=None), n: int = Query(default=20, ge=1, le=100)) -> HTMLResponse:
+def index(q: str | None = Query(default=None), n: int = Query(default=10, ge=1, le=100)) -> HTMLResponse:
     image_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
     query = (q or "").strip()
 
